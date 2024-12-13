@@ -19,4 +19,4 @@
 - Contains programs I wrote in completing tutorials associated with postgraduate [study unit CIS5002](https://www.um.edu.mt/courses/studyunit/CIS5002).
 
 ## 5. _Miscellaneous_ (Folder):
-- Contains a Pygame simulation of Conway's Game of Life that I learned to build from a YouTube tutorial.
+- Contains a Pygame simulation of Conway's Game of Life that I learned to build from a [YouTube tutorial](https://www.youtube.com/watch?v=cRWg2SWuXtM).
