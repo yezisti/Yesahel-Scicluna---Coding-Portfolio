@@ -1,0 +1,1584 @@
+---
+title: "SOR2520 Project Part 1"
+author: "Yesahel Scicluna"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Environment Preparation
+
+## Set the working directory
+```{r setting working directory}
+setwd("C:/Users/yesah/Documents/RStudio/SOR2520 Project Part 1")
+```
+
+## Import the necessary packages
+```{r importing packages}
+library(DescTools)
+library(plyr)
+library(psych)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(lawstat)
+library(MBESS)
+library(effsize)
+library(effectsize)
+library(rstatix)
+library(energy)
+library(fastDummies)
+library(Hmisc)
+library(lmtest)
+library(caret)
+library(MASS)
+```
+## Import the dataset
+```{r importing dataset}
+df_raw <- read.csv('cirrhosis.csv', header = TRUE)
+```
+
+## Discard the ID column and the variables other than "Drug" with >= 106 missing values
+```{r discarding nonessential variables}
+cat("No. of vars. before:\n")
+ncol(df_raw)
+
+cat("\nNAs before:\n")
+colSums(is.na(df_raw))
+
+df_main <- df_raw[, c(-1, -7:-9, -12, -14:-17)]
+
+cat("\nNo. of vars. after:\n")
+ncol(df_main)
+
+cat("\nNAs after:\n")
+colSums(is.na(df_main))
+```
+## Discard the observations of patients who received liver transplants
+```{r discarding nonessential status levels}
+cat("No. of observations before:\n")
+nrow(df_main)
+
+df_main <- df_main[df_main$Status != 'CL', ]
+
+cat("\nNo. of observations after:\n")
+nrow(df_main)
+```
+# Recode and impute the remaining missing values
+```{r data cleaning and imputation}
+cat("\nNAs before:\n")
+colSums(is.na(df_main))
+
+df_main$Drug[is.na(df_main$Drug)] <- "None"
+
+df_main$Platelets[is.na(df_main$Platelets)] <- median(df_main$Platelets, na.rm = TRUE)
+df_main$Prothrombin[is.na(df_main$Prothrombin)] <- median(df_main$Prothrombin, na.rm = TRUE)
+df_main$Stage[is.na(df_main$Stage)] <- Mode(df_main$Stage, na.rm = TRUE)
+
+cat("\nNAs after:\n")
+colSums(is.na(df_main))
+```
+# Clean up variable names, transform quantitative data, define qualitative variables, and clean up levels as necessary
+```{r recoding variables}
+colnames(df_main)[colnames(df_main) == "N_Days"] <- "Time"
+df_main$Time <- df_main$Time / 365.25
+
+df_main$Age <- df_main$Age / 365.25
+
+df_main$Platelets <- df_main$Platelets / 10
+
+df_main$Status <- mapvalues(df_main$Status, 
+                            from = c("C", "D"), 
+                            to = c("Censored", "Deceased"))
+df_main$Status <- factor(df_main$Status)
+
+df_main$Drug <- mapvalues(df_main$Drug, 
+                          from = c("D-penicillamine"), 
+                          to = c("Penicillamine"))
+df_main$Drug <- factor(df_main$Drug, 
+                       levels = c("None", "Placebo", "Penicillamine"))
+
+df_main$Sex <- mapvalues(df_main$Sex, 
+                         from = c("M", "F"), 
+                         to = c("Male", "Female"))
+df_main$Sex <- factor(df_main$Sex, 
+                      levels = c("Male", "Female"))
+
+colnames(df_main)[colnames(df_main) == "Edema"] <- "Oedema"
+df_main$Oedema <- mapvalues(df_main$Oedema, 
+                         from = c("N", "S", "Y"), 
+                         to = c("No Oedema", "Mild Oedema", "Severe Oedema"))
+df_main$Oedema <- factor(df_main$Oedema, 
+                        levels = c("No Oedema", "Mild Oedema", "Severe Oedema"))
+
+df_main$Stage <- mapvalues(df_main$Stage,
+                           from = c(1, 2, 3, 4), 
+                           to = c("Stage I", "Stage II", "Stage III", "Stage IV"))
+df_main$Stage <- factor(df_main$Stage,
+                        levels = c("Stage I", "Stage II", "Stage III", "Stage IV"))
+
+
+```
+
+## Derive a subset dataset specific to observations of deceased patients
+```{r creating a subset dataset}
+df_deceased <- df_main[df_main$Status == 'Deceased',]
+df_deceased <- df_deceased[,-2]
+
+# Discard 2 observations of deceased patients at Stage I of disease on account of said level's rarity
+df_deceased <- df_deceased[df_deceased$Stage != "Stage I",]
+df_deceased$Stage <- factor(df_deceased$Stage, 
+                            levels = c("Stage II", "Stage III", "Stage IV"))
+```
+
+## Save datasets as CSVs
+```{r write CSVs}
+write.csv(df_main, './outputs/cirrhosis_main.csv', row.names = FALSE)
+write.csv(df_deceased, './outputs/cirrhosis_deceased.csv', row.names = FALSE)
+```
+
+# Descriptive Statistics
+
+## Obtain measures of location and dispersion for the quantitative variables
+```{r main - quantitatives}
+main_descrptives_quantitative <- psych::describe(df_main[, c(1, 4, 7:10)], trim = 0.1)
+write.csv(main_descrptives_quantitative, './outputs/main_descriptives_quantitative.csv')
+main_descrptives_quantitative
+```
+```{r main - quantitatives 2}
+summary(df_main[, c(1, 4, 7:10)])
+```
+```{r deceased - quantitatives}
+deceased_descrptives_quantitative <- psych::describe(df_deceased[, c(1, 3, 6:9)], trim = 0.1)
+write.csv(deceased_descrptives_quantitative, './outputs/deceased_descriptives_quantitative.csv')
+deceased_descrptives_quantitative
+```
+## Obtain frequency tables for the qualitative variables
+```{r main - qualitatives}
+main_descriptives_qualitative <- capture.output(summary(df_main[, c(-1, -4, -7:-10)]))
+writeLines(main_descriptives_qualitative, './outputs/main_descriptives_qualitative.txt')
+main_descriptives_qualitative
+```
+```{r deceased - qualitatives}
+deceased_descriptives_qualitative <- capture.output(summary(df_deceased[, c(-1, -3, -6:-9)]))
+writeLines(deceased_descriptives_qualitative, './outputs/deceased_descriptives_qualitative.txt')
+deceased_descriptives_qualitative
+```
+# Graphical Representations
+
+## Pie Charts
+
+### Plot of survival status by clinical trial participation
+```{r pie - status by treatment} 
+pie_table <- df_main %>%
+  group_by(Drug, Status) %>%
+  summarise(Count = n(), .groups = "drop") %>%  
+  group_by(Drug) %>%                      
+  mutate(Percentage = Count / sum(Count) * 100)
+
+pie_chart <- ggplot(pie_table, aes(x = "", y = Percentage, fill = Status)) +
+  geom_bar(stat = "identity", width = 1, colour = "black") +
+  coord_polar("y", start = 0) +
+  facet_wrap(~Drug, 
+             labeller = as_labeller(c("Penicillamine" = "Participants treated with \n Penicillamine",
+                                      "Placebo" = "Participants treated with \n Placebo",
+                                      "None" = "Non-Participants"))) +
+  labs(fill = "Patient Status:") + 
+  scale_fill_manual(labels = c("Censored", "Deceased"),
+                    values = c("#f7f7f7", "#d7301f")) +
+  geom_label(aes(label = paste0(round(Percentage), "%")),
+            position = position_stack(vjust = 0.5),
+            size = 3, 
+            show.legend = FALSE) +
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11))
+
+print(pie_chart)
+
+ggsave(filename = "./outputs/pie_drug.jpeg", plot = pie_chart, width = 7, height = 3.5, dpi = 300)
+```
+### Plot of survival status by sex
+```{r pie - status by sex}
+pie_table2 <- df_main %>%
+  group_by(Sex, Status) %>%
+  summarise(Count = n(), .groups = "drop") %>%  
+  group_by(Sex) %>%                      
+  mutate(Percentage = Count / sum(Count) * 100)
+
+pie_chart2 <- ggplot(pie_table2, aes(x = "", y = Percentage, fill = Status)) +
+  geom_bar(stat = "identity", width = 1, colour = "black") +
+  coord_polar("y", start = 0) +
+  facet_wrap(~Sex, 
+             labeller = as_labeller(c("Female" = "Female Patients",
+                                      "Male" = "Male Patients"))) +
+  labs(fill = "Patient Status:") + 
+  scale_fill_manual(labels = c("Censored", "Deceased"),
+                    values = c("#f7f7f7", "#d7301f")) +
+  geom_label(aes(label = paste0(round(Percentage), "%")),
+            position = position_stack(vjust = 0.5),
+            size = 3, 
+            show.legend = FALSE) +
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11))
+
+print(pie_chart2)
+
+ggsave(filename = "./outputs/pie_sex.jpeg", plot = pie_chart2, width = 5, height = 3.5, dpi = 300)
+```
+## Bar Charts
+
+### Plot of survival status by severity of oedema
+```{r bar - status by oedema}
+bar_table <- df_main %>%
+  group_by(Oedema, Status) %>%
+  summarise(Count = n(), .groups = "drop") %>% 
+  group_by(Oedema) %>%                      
+  mutate(Percentage = Count / sum(Count) * 100)
+
+bar_chart <- bar_table %>%
+  ggplot() +
+  geom_bar(aes(x = Oedema, y = Count, fill = Status), 
+           position = "stack",
+           stat = "identity",
+           colour  = 'black') +
+  geom_label(aes(x = Oedema, y = Count, label = paste0(round(Percentage), "%"),
+                 group = Status),
+             position = position_stack(vjust = 0.5),
+             size = 3,
+             colour = "black",
+             show.legend = FALSE) +
+  scale_fill_manual(labels = c("Censored", "Deceased"),
+                    values = c("#f7f7f7", "#d7301f")) +
+  labs(x = "Patient Presentation",
+       y = "Frequency",
+       fill = "Patient Status") +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(breaks = seq(0, 380, by = 20),
+                     expand = expansion(mult = c(0.02, 0.02)))
+
+print(bar_chart)
+
+ggsave(filename = "./outputs/bar_oedema.jpeg", plot = bar_chart, width = 5, height = 7, dpi = 300)
+
+```
+### Plot of survival status by histological stage
+```{r bar - status by stage}
+bar_table2 <- df_main %>%
+  group_by(Stage, Status) %>%
+  summarise(Count = n(), .groups = "drop") %>% 
+  group_by(Stage) %>%                      
+  mutate(Percentage = Count / sum(Count) * 100)
+
+bar_chart2 <- bar_table2 %>%
+  ggplot() +
+  geom_bar(aes(x = Stage, y = Count, fill = Status), 
+           position = "stack",
+           stat = "identity",
+           colour  = 'black') +
+  geom_label(aes(x = Stage, y = Count, label = paste0(round(Percentage), "%"),
+                 group = Status),
+             position = position_stack(vjust = 0.5),
+             size = 3,
+             colour = "black",
+             show.legend = FALSE) +
+  scale_fill_manual(labels = c("Censored", "Deceased"),
+                    values = c("#f7f7f7", "#d7301f")) +
+  labs(x = "Histological Stage of Disease",
+       y = "Frequency",
+       fill = "Patient Status") +
+  theme(panel.grid.major.x = element_blank()) +
+  scale_y_continuous(breaks = seq(0, 180, by = 10),
+                     expand = expansion(mult = c(0.02, 0.02)))
+
+print(bar_chart2)
+
+ggsave(filename = "./outputs/bar_stage.jpeg", plot = bar_chart2, width = 5, height = 7, dpi = 300)
+
+```
+## Histograms
+
+### Plot of observation time by survival status
+```{r hist - observation time by status}
+
+hist_mean <- df_main %>%
+  group_by(Status) %>%
+  summarise(mean_Time = mean(Time))
+
+histogram <- df_main %>%
+  ggplot(aes(x = Time, fill = Status, alpha = Status)) +
+  geom_histogram(colour = "grey30",
+                 position = 'identity',
+                 bins = 50,
+                 linewidth = 0.5) +
+  geom_vline(data = hist_mean,
+             aes(xintercept = mean_Time, colour = Status),
+             linetype = "dashed",
+             linewidth = 1,
+             show.legend = FALSE) +
+  labs(x = "Observation Time (Years)",
+       y = "Frequency",
+       fill = "Patient Status",
+       colour = "Patient Status") +
+  scale_y_continuous(breaks = seq(0, 13, by = 1),
+                     expand = expansion(mult = c(0.02, 0.03))) +
+  scale_x_continuous(breaks = seq(0, 13, by = 1),
+                     expand = expansion(mult = c(0.01, 0.03))) +
+  scale_fill_manual(labels = c("Censored", "Deceased"),
+                    values = c("white", "#d7301f")) +
+  scale_colour_manual(labels = c("Censored", "Deceased"),
+                      values = c("white", "#d7301f")) +
+  scale_alpha_manual(values = c(1, 0.65), 
+                     guide = "none") +
+  theme(panel.background = element_rect(fill = "grey85", colour = NA))
+
+print(histogram)
+
+ggsave(filename = "./outputs/hist_time.jpeg", plot = histogram, width = 7, height = 5, dpi = 300)
+```
+### Plot of age by survival status
+```{r hist - age by status}
+
+hist_mean2 <- df_main %>%
+  group_by(Status) %>%
+  summarise(mean_Age = mean(Age))
+
+histogram2 <- df_main %>%
+  ggplot(aes(x = Age, fill = Status, alpha = Status)) +
+  geom_histogram(colour = "grey30",
+                 position = 'identity',
+                 bins = 50,
+                 linewidth = 0.5) +
+  geom_vline(data = hist_mean2,
+             aes(xintercept = mean_Age, colour = Status),
+             linetype = "dashed",
+             linewidth = 1,
+             show.legend = FALSE) +
+  labs(x = "Patient Age (Years)",
+       y = "Frequency",
+       fill = "Patient Status",
+       colour = "Patient Status") +
+  scale_y_continuous(breaks = seq(0, 13, by = 1),
+                     expand = expansion(mult = c(0.02, 0.03))) +
+  scale_x_continuous(breaks = seq(20, 85, by = 5),
+                     expand = expansion(mult = c(0.03, 0.03))) +
+  scale_fill_manual(labels = c("Censored", "Deceased"),
+                    values = c("white", "#d7301f")) +
+  scale_colour_manual(labels = c("Censored", "Deceased"),
+                      values = c("white", "#d7301f")) +
+  scale_alpha_manual(values = c(1, 0.65), 
+                     guide = "none") +
+  theme(panel.background = element_rect(fill = "grey85", colour = NA))
+
+print(histogram2)
+
+ggsave(filename = "./outputs/hist_age.jpeg", plot = histogram2, width = 7, height = 5, dpi = 300)
+```
+## Box Plots
+
+### Censored vs Deceased
+
+#### Plot of serum bilirubin level by survival status
+```{r box - bilirubin by status}
+box_plot <- ggplot(df_main, aes(x = Status, y = Bilirubin, fill = Status)) + 
+  geom_boxplot() +
+  labs(x = "Patient Status",
+       y = "[Serum Bilirubin] (mg/dL)") +
+  scale_y_continuous(breaks = seq(0, 28, by = 2),
+                     expand = expansion(mult = c(0.02, 0.02))) +
+  scale_fill_manual(values = c("#f7f7f7", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 10), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot)
+
+ggsave(filename = "./outputs/box_bilirubin.jpeg", plot = box_plot, width = 3, height = 6, dpi = 300)
+```
+#### Plot of serum albumin level by survival status
+```{r box - albumin by status}
+box_plot2 <- ggplot(df_main, aes(x = Status, y = Albumin, fill = Status)) + 
+  geom_boxplot() +
+  labs(x = "Patient Status",
+       y = "[Serum Albumin] (mg/dL)") +
+  scale_y_continuous(breaks = seq(1, 5, by = 0.2),
+                     expand = expansion(mult = c(0.02, 0.02))) +
+  scale_fill_manual(values = c("#f7f7f7", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 10), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot2)
+
+ggsave(filename = "./outputs/box_albumin.jpeg", plot = box_plot2, width = 3, height = 6, dpi = 300)
+```
+#### Plot of blood platelet count by survival status
+```{r box - platelets by status}
+box_plot3 <- ggplot(df_main, aes(x = Status, y = Platelets, fill = Status)) + 
+  geom_boxplot() +
+  labs(x = "Patient Status",
+       y = "Platelet Count (10k/µL)") +
+  scale_y_continuous(breaks = seq(5, 80, by = 5),
+                     expand = expansion(mult = c(0.04, 0.04))) +
+  scale_fill_manual(values = c("#f7f7f7", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 10), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot3)
+
+ggsave(filename = "./outputs/box_platelet.jpeg", plot = box_plot3, width = 3, height = 6, dpi = 300)
+```
+#### Plot of prothrombin time by survival status
+```{r box - prothrombin time by status}
+box_plot4 <- ggplot(df_main, aes(x = Status, y = Prothrombin, fill = Status)) + 
+  geom_boxplot() +
+  labs(x = "Patient Status",
+       y = "Prothrombin Time (s)") +
+  scale_y_continuous(breaks = seq(8, 20, by = 0.5),
+                     expand = expansion(mult = c(0.02, 0.02))) +
+  scale_fill_manual(values = c("#f7f7f7", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 10), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot4)
+
+ggsave(filename = "./outputs/box_prothrombin.jpeg", plot = box_plot4, width = 3, height = 6, dpi = 300)
+```
+### Survival Time
+
+#### Plot of survival time by clinical trial participation
+```{r box - survival time by treatment}
+box_plot5 <- ggplot(df_deceased, aes(x = Drug, y = Time, fill = Drug)) + 
+  geom_boxplot() +
+  labs(x = "Treatment Provided",
+       y = "Survival Time (Years)") +
+  scale_y_continuous(breaks = seq(0, 11, by = 1),
+                     expand = expansion(mult = c(0.04, 0.04))) +
+  scale_fill_manual(values = c("grey", "#f7f7f7", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 10), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot5)
+
+ggsave(filename = "./outputs/box_drug.jpeg", plot = box_plot5, width = 3, height = 6, dpi = 300)
+```
+#### Plot of survival time by sex
+```{r box - survival time by sex}
+box_plot6 <- ggplot(df_deceased, aes(x = Sex, y = Time, fill = Sex)) + 
+  geom_boxplot() +
+  labs(x = "Patient Sex",
+       y = "Survival Time (Years)") +
+  scale_y_continuous(breaks = seq(0, 11, by = 1),
+                     expand = expansion(mult = c(0.04, 0.04))) +
+  scale_fill_manual(values = c("#f7f7f7", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 10), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot6)
+
+ggsave(filename = "./outputs/box_sex.jpeg", plot = box_plot6, width = 3, height = 6, dpi = 300)
+```
+#### Plot of survival time by severity of oedema
+```{r box - survival time by oedema}
+box_plot7 <- ggplot(df_deceased, aes(x = Oedema, y = Time, fill = Oedema)) + 
+  geom_boxplot() +
+  labs(x = "Patient Presentation",
+       y = "Survival Time (Years)") +
+  scale_y_continuous(breaks = seq(0, 11, by = 1),
+                     expand = expansion(mult = c(0.04, 0.04))) +
+  scale_fill_manual(values = c("#f7f7f7", "#fc8d59", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 8), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot7)
+
+ggsave(filename = "./outputs/box_oedema.jpeg", plot = box_plot7, width = 3, height = 6, dpi = 300)
+```
+#### Plot of survival time by histological stage
+```{r box - survival time by stage}
+
+box_plot8 <- ggplot(df_deceased, aes(x = Stage, y = Time, fill = Stage)) + 
+  geom_boxplot() +
+  labs(x = "Histological Stage of Disease",
+       y = "Survival Time (Years)") +
+  scale_y_continuous(breaks = seq(0, 11, by = 1),
+                     expand = expansion(mult = c(0.04, 0.04))) +
+  scale_fill_manual(values = c("#f7f7f7", "#fc8d59", "#d7301f")) + 
+  guides(fill = "none", colour = "none") +
+  theme(axis.text.x = element_text(size = 9), 
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+print(box_plot8)
+
+ggsave(filename = "./outputs/box_stage.jpeg", plot = box_plot8, width = 3, height = 6, dpi = 300)
+```
+## Scatter Plots
+
+### Plot of survival time against age
+```{r scatter - age vs survival time}
+scatter_plot <- ggplot(df_deceased, aes(x = Age, y = Time)) + 
+  geom_point(shape = 21, colour = "grey40", fill = "white", stroke = 0.7, size = 2) +  
+  geom_smooth(method = lm, se = FALSE, fullrange = TRUE, colour = "#d7301f") +
+  labs(x = "Patient Age (Years)",
+       y = "Survival Time (Years)") +
+  scale_x_continuous(breaks = seq(30, 80, by = 5),
+                     expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(breaks = seq(0, 12, by = 1),
+                     expand = expansion(mult = c(0.03, 0.03)))
+
+print(scatter_plot)
+
+ggsave(filename = "./outputs/scatter_age.jpeg", plot = scatter_plot, width = 5, height = 5, dpi = 300)
+```
+### Plot of survival time against serum bilirubin level
+```{r scatter - bilirubin vs survival time}
+scatter_plot2 <- ggplot(df_deceased, aes(x = Bilirubin, y = Time)) + 
+  geom_point(shape = 21, colour = "grey40", fill = "white", stroke = 0.7, size = 2) +  
+  geom_smooth(method = lm, se = FALSE, fullrange = TRUE, colour = "#d7301f") +
+  labs(x = "[Serum Bilirubin] (mg/dL)",
+       y = "Survival Time (Years)") +
+  scale_x_continuous(breaks = seq(0, 30, by = 2),
+                     expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(breaks = seq(0, 12, by = 1),
+                     expand = expansion(mult = c(0.03, 0.03)))
+
+print(scatter_plot2)
+
+ggsave(filename = "./outputs/scatter_bilirubin.jpeg", plot = scatter_plot2, width = 5, height = 5, dpi = 300)
+```
+### Plot of survival time against serum albumin level
+```{r scatter - albumin vs survival time}
+scatter_plot3 <- ggplot(df_deceased, aes(x = Albumin, y = Time)) + 
+  geom_point(shape = 21, colour = "grey40", fill = "white", stroke = 0.7, size = 2) +  
+  geom_smooth(method = lm, se = FALSE, fullrange = TRUE, colour = "#d7301f") +
+  labs(x = "[Serum Albumin] (mg/dL)",
+       y = "Survival Time (Years)") +
+  scale_x_continuous(breaks = seq(2, 5, by = 0.2),
+                     expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(breaks = seq(0, 12, by = 1),
+                     expand = expansion(mult = c(0.03, 0.03)))
+
+print(scatter_plot3)
+
+ggsave(filename = "./outputs/scatter_albumin.jpeg", plot = scatter_plot3, width = 5, height = 5, dpi = 300)
+```
+### Plot of survival time against blood platelet count
+```{r scatter - platelets vs survival time}
+scatter_plot4 <- ggplot(df_deceased, aes(x = Platelets, y = Time)) + 
+  geom_point(shape = 21, colour = "grey40", fill = "white", stroke = 0.7, size = 2) +  
+  geom_smooth(method = lm, se = FALSE, fullrange = TRUE, colour = "#d7301f") +
+  labs(x = "Platelet Count (10k/µL)",
+       y = "Survival Time (Years)") +
+  scale_x_continuous(breaks = seq(5, 80, by = 5),
+                     expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(breaks = seq(0, 12, by = 1),
+                     expand = expansion(mult = c(0.03, 0.03)))
+
+print(scatter_plot4)
+
+ggsave(filename = "./outputs/scatter_platelets.jpeg", plot = scatter_plot4, width = 5, height = 5, dpi = 300)
+```
+### Plot of survival time against prothrombin time
+```{r scatter - prothrombin time vs survival time}
+scatter_plot5 <- ggplot(df_deceased, aes(x = Prothrombin, y = Time)) + 
+  geom_point(shape = 21, colour = "grey40", fill = "white", stroke = 0.7, size = 2) +  
+  geom_smooth(method = lm, se = FALSE, fullrange = TRUE, colour = "#d7301f") +
+  labs(x = "Prothrombin Time (s)",
+       y = "Survival Time (Years)") +
+  scale_x_continuous(breaks = seq(9, 16, by = 0.5),
+                     expand = expansion(mult = c(0.03, 0.03))) +
+  scale_y_continuous(breaks = seq(0, 12, by = 1),
+                     expand = expansion(mult = c(0.03, 0.03)))
+
+print(scatter_plot5)
+
+ggsave(filename = "./outputs/scatter_prothrombin.jpeg", plot = scatter_plot5, width = 5, height = 5, dpi = 300)
+```
+# Inferential Statistics
+
+## Define a function that removes outliers using the IQR method
+```{r remove outliers}
+drop_outliers <- function(data, column_name) {
+  
+  # Calculate IQR and bounds
+  Q1 <- quantile(data[[column_name]], 0.25)
+  Q3 <- quantile(data[[column_name]], 0.75)
+  IQR_value <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR_value
+  upper_bound <- Q3 + 1.5 * IQR_value
+  
+  # Filter rows to keep only those within the bounds
+  data_cleaned <- data[data[[column_name]] >= lower_bound & data[[column_name]] <= upper_bound, ]
+  
+  return(data_cleaned)
+}
+```
+
+## Censored vs Deceased
+
+### Chi-Squared Test for Homogeneity
+
+#### Test for differences in survival statuses grouped by clinical trial participation
+```{r chisq test - status by treatment}
+# H0: There is no association between type of treatment and patient status (p > 0.05)
+# H1: There is an association between type of treatment and patient status (p < 0.05)
+
+freq_table <- table(df_main$Drug, df_main$Status)
+freq_table
+chisq.test(freq_table, correct=FALSE)
+
+# H0 failed to be rejected
+```
+#### Test for differences in survival statuses grouped by sex
+```{r chisq test - status by sex}
+# H0: There is no association between patient sex and patient status (p > 0.05)
+# H1: There is an association between patient sex and patient status (p < 0.05)
+
+freq_table2 <- table(df_main$Sex, df_main$Status)
+freq_table2
+chisq.test(freq_table2, correct=FALSE)
+
+# H0 rejected
+```
+#### Test for differences in survival statuses grouped by severity of oedema
+```{r chisq test - status by oedema}
+# H0: There is no association between severity of oedema and patient status (p > 0.05)
+# H1: There is an association between severity of oedema and patient status (p < 0.05)
+
+freq_table3 <- table(df_main$Oedema, df_main$Status)
+freq_table3
+chisq.test(freq_table3, correct=FALSE)
+
+# H0 rejected
+```
+#### Test for differences in survival statuses grouped by histological stage
+```{r chisq test - status by stage}
+# H0: There is no association between histological stage of disease and patient status (p > 0.05)
+# H1: There is an association between histological stage of disease and patient status (p < 0.05)
+
+freq_table4 <- table(df_main$Stage, df_main$Status)
+freq_table4
+chisq.test(freq_table4, correct=FALSE)
+
+# H0 rejected
+```
+### Shapiro-Wilk Test for Normality
+
+#### Test for normality in observation times grouped by survival status
+```{r sw test - observation time by status}
+# For both censored and deceased patients:
+# H0: Observation times follow a normal distribution (p > 0.05)
+# H1: Observation times do not follow a normal distribution (p < 0.05)
+
+by(df_main$Time, df_main$Status, shapiro.test)
+
+# H0 rejected for both censored and deceased patients
+```
+#### Test for normality in observation times grouped by survival status after dropping outliers
+```{r sw test - observation time by status (dropped outliers)}
+df_clean <- drop_outliers(df_main, "Time")
+
+# For both censored and deceased patients:
+# H0: Observation times follow a normal distribution (p > 0.05)
+# H1: Observation times do not follow a normal distribution (p < 0.05)
+
+by(df_clean$Time, df_clean$Status, shapiro.test)
+
+# H0 rejected for both censored and deceased patients
+```
+#### Test for normality in ages grouped by survival status 
+```{r sw test - age by status}
+# For both censored and deceased patients:
+# H0: Patient ages follow a normal distribution (p > 0.05)
+# H1: Patient ages do not follow a normal distribution (p < 0.05)
+
+by(df_main$Age, df_main$Status, shapiro.test)
+
+# H0 failed to be rejected for both censored and deceased patients
+```
+#### Test for normality in serum bilirubin levels grouped by survival status
+```{r sw test - bilirubin by status}
+# For both censored and deceased patients:
+# H0: Bilirubin levels follow a normal distribution (p > 0.05)
+# H1: Bilirubin levels do not follow a normal distribution (p < 0.05)
+
+by(df_main$Bilirubin, df_main$Status, shapiro.test)
+
+# H0 rejected for both censored and deceased patients
+```
+#### Test for normality in serum bilirubin levels grouped by survival status after dropping outliers
+```{r sw test - bilirubin by status (dropped outliers)}
+df_clean <- drop_outliers(df_main, "Bilirubin")
+
+# For both censored and deceased patients:
+# H0: Bilirubin levels follow a normal distribution (p > 0.05)
+# H1: Bilirubin levels do not follow a normal distribution (p < 0.05)
+
+by(df_clean$Bilirubin, df_clean$Status, shapiro.test)
+
+# H0 rejected for both censored and deceased patients
+```
+#### Test for normality in serum albumin levels grouped by survival status
+```{r sw test - albumin by status}
+# For both censored and deceased patients:
+# H0: Albumin levels follow normal distribution (p > 0.05)
+# H1: Albumin levels do not follow a normal distribution (p < 0.05)
+
+by(df_main$Albumin, df_main$Status, shapiro.test)
+
+# H0 failed to be rejected for both censored and deceased patients
+```
+#### Test for normality in blood platelet counts grouped by survival status
+```{r sw test - platelets by status}
+# For both censored and deceased patients:
+# H0: Platelet counts follow a normal distribution (p > 0.05)
+# H1: Platelet counts do not follow a normal distribution (p < 0.05)
+
+by(df_main$Platelets, df_main$Status, shapiro.test)
+
+# H0 rejected for both censored and deceased patients
+```
+#### Test for normality in blood platelet counts grouped by survival status after dropping outliers
+```{r sw test - platelets by status (dropped outliers)}
+df_clean <- drop_outliers(df_main, "Platelets")
+
+# For both censored and deceased patients:
+# H0: Platelet counts follow a normal distribution (p > 0.05)
+# H1: Platelet counts do not follow a normal distribution (p < 0.05)
+
+by(df_clean$Platelets, df_clean$Status, shapiro.test)
+
+# H0 failed to be rejected for censored patients
+# H0 rejected for deceased patients
+```
+#### Test for normality in prothrombin times grouped by survival status
+```{r sw test - prothrombin time by status}
+# For both censored and deceased patients:
+# H0: Prothrombin times follow a normal distribution (p > 0.05)
+# H1: Prothrombin times do not follow a normal distribution (p < 0.05)
+
+by(df_main$Prothrombin, df_main$Status, shapiro.test)
+
+# H0 rejected for both censored and deceased patients
+```
+#### Test for normality in prothrombin times grouped by survival status after dropping outliers
+```{r sw test - prothrombin time by status (dropped outliers)}
+df_clean <- drop_outliers(df_main, "Prothrombin")
+
+# For both censored and deceased patients:
+# H0: Prothrombin times follow a normal distribution (p > 0.05)
+# H1: Prothrombin times do not follow a normal distribution (p < 0.05)
+
+by(df_clean$Prothrombin, df_clean$Status, shapiro.test)
+
+# H0 failed to be rejected for deceased patients
+# H0 rejected for both censored patients
+```
+
+### Levene's Test for Equality of Variances
+
+#### Test for equality of variances between ages grouped by survival status
+```{r levene test - age by status}
+# H0: The variances in age of the censored and deceased patients are equal (p > 0.05)
+# H1: The variances in age of the censored and deceased patients are not equal (p < 0.05)
+
+by(df_main$Age, df_main$Status, var)
+levene.test(df_main$Age, df_main$Status, location='mean')
+
+# H0 failed to be rejected
+```
+#### Test for equality of variances between serum albumin levels grouped by survival status
+```{r levene test - albumin by status}
+# H0: The variances in albumin levels of the censored and deceased patients are equal (p > 0.05)
+# H1: The variances in albumin levels of the censored and deceased patients are not equal (p < 0.05)
+
+by(df_main$Albumin, df_main$Status, var)
+levene.test(df_main$Albumin, df_main$Status, location='mean')
+
+# H0 rejected
+```
+### Independent Samples t-Test
+
+#### Test for differences in ages grouped by survival status
+```{r ind. samples t test - age by status}
+# H0: The mean ages of the censored and deceased patients are equal (p > 0.05)
+# H1: The mean ages of the censored and deceased patients are not equal (p < 0.05)
+
+t.test(df_main$Age ~ df_main$Status, mu=0, var.equal=TRUE)
+
+# H0 rejected
+
+# Effect size - Hedge's g - chosen to account for unequal sample sizes
+cohen.d(df_main$Age ~ df_main$Status, hedges.correction = TRUE)
+```
+
+#### Test for differences in serum albumin levels grouped by survival status
+```{r ind. samples t test - albumin by status}
+# H0: The mean albumin levels of the censored and deceased patients are equal (p > 0.05)
+# H1: The mean albumin level of the censored patients is greater than that of the deceased patients (p < 0.05)
+
+t.test(df_main$Albumin ~ df_main$Status,  mu=0, var.equal=FALSE)
+
+# H0 rejected
+
+# Effect size - glass's delta - chosen to account for unequal variances
+cohen.d(df_main$Albumin ~ df_main$Status, type = "glass")
+```
+
+### Mann-Whitney U Test
+
+#### Test for differences in observation times grouped by survival status
+```{r mw u test - observation time by status}
+# H0: The median observation times of the censored and deceased patients are equal (p > 0.05)
+# H1: The median observation times of the censored and deceased patients are not equal (p < 0.05)
+
+by(df_main$Time, df_main$Status, median)
+wilcox.test(Time ~ Status, data = df_main, exact = FALSE)
+
+# H0 rejected
+
+# Effect size - rank-biserial correlation
+rank_biserial(Time ~ Status, data = df_main, exact = FALSE)
+```
+
+#### Test for differences in serum blirubin levels grouped by survival status
+```{r mw u test - bilirubin by status}
+# H0: The median bilirubin levels of the censored and deceased patients are equal (p > 0.05)
+# H1: The median bilirubin levels of the censored and deceased patients are not equal (p < 0.05)
+
+by(df_main$Bilirubin, df_main$Status, median)
+wilcox.test(Bilirubin ~ Status, data = df_main, exact = FALSE)
+
+# H0 rejected
+
+# Effect size - rank-biserial correlation
+rank_biserial(Bilirubin ~ Status, data = df_main, exact = FALSE)
+```
+
+#### Test for differences in blood platelets counts grouped by survival status
+```{r mw u test - platelets by status}
+# H0: The median platelet counts of the censored and deceased patients are equal (p > 0.05)
+# H1: The median platelet counts of the censored and deceased patients are not equal (p < 0.05)
+
+by(df_main$Platelets, df_main$Status, median)
+wilcox.test(Platelets ~ Status, data = df_main, exact = FALSE)
+
+# H0 rejected
+
+# Effect size - rank-biserial correlation
+rank_biserial(Platelets ~ Status, data = df_main, exact = FALSE)
+```
+
+#### Test for differences in prothrombin times grouped by survival status
+```{r mw u test - prothrombin time by status}
+# H0: The median prothrombin times of the censored and deceased patients are equal (p > 0.05)
+# H1: The median prothrombin times of the censored and deceased patients are not equal (p < 0.05)
+
+by(df_main$Prothrombin, df_main$Status, median)
+wilcox.test(Prothrombin ~ Status, data = df_main, exact = FALSE)
+
+# H0 rejected
+
+# Effect size - rank-biserial correlation
+rank_biserial(Prothrombin ~ Status, data = df_main, exact = FALSE)
+```
+
+## Survival Time 
+
+### Test for Multivariate Normality
+
+#### Test for joint normality in age and survival time
+```{r mvnorm test - age and survival time}
+# H0: Patient ages and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Patient ages and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_deceased[, c(1,3)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in age and survival time after dropping outliers
+```{r mvnorm test - age and survival time (dropped outliers)}
+df_clean <- drop_outliers(df_deceased, "Time")
+df_clean <- drop_outliers(df_clean, "Age")
+
+# H0: Patient ages and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Patient ages and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_clean[, c(1,3)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in serum bilirubin level and survival time
+```{r mvnorm test - bilirbin and survival time}
+# H0: Biliriubin levels and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Bilirubin levels and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_deceased[, c(1,6)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in serum bilirubin level and survival time after dropping outliers
+```{r mvnorm test - bilirubin and survival time (dropped outliers)}
+df_clean <- drop_outliers(df_deceased, "Time")
+df_clean <- drop_outliers(df_clean, "Bilirubin")
+
+# H0: Patient ages and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Patient ages and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_clean[, c(1,6)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in serum albumin level and survival time
+```{r mvnorm test - albumin and survival time}
+# H0: Albumin levels and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Albumin levels and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_deceased[, c(1,7)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in serum albumin level and survival time after dropping outliers
+```{r mvnorm test - albumin and survival time (dropped outliers)}
+df_clean <- drop_outliers(df_deceased, "Time")
+df_clean <- drop_outliers(df_clean, "Albumin")
+
+# H0: Albumin levels and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Albumin levels and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_clean[, c(1,7)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in blood platelet count and survival time
+```{r mvnorm test - platelets and survival time}
+# H0: Platelet counts and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Platelet counts and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_deceased[, c(1,8)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in blood platelet count and survival time after dropping outliers
+```{r mvnorm test - platelets and survival time (dropped outliers)}
+df_clean <- drop_outliers(df_deceased, "Time")
+df_clean <- drop_outliers(df_clean, "Platelets")
+
+# H0: Platelet counts and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Platelet counts and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_clean[, c(1,8)], R=1000)
+
+# H0 rejected
+```
+#### Test for joint normality in prothrombin time and survival time
+```{r mvnorm test - prothrombin time and survival time}
+# H0: Prothrombin times and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Prothrombin times and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_deceased[, c(1,9)], R=1000)
+
+# H0 rejected
+```
+
+#### Test for joint normality in prothrombin time and survival time after dropping outliers
+```{r mvnorm test - prothrombin time and survival time (dropped outliers)}
+df_clean <- drop_outliers(df_deceased, "Time")
+df_clean <- drop_outliers(df_clean, "Prothrombin")
+
+# H0: Prothrombin times and survival times follow a bivariate normal distribution (p > 0.05)
+# H1: Prothrombin times and survival times do not follow a bivariate normal distribution (p < 0.05)
+
+mvnorm.etest(df_clean[, c(1,9)], R=1000)
+
+# H0 rejected
+```
+
+### Spearman Correlation
+
+#### Test for correlation between age and survival time
+```{r sprman corr test - age and survival time}
+# H0: Patient ages and survival times are independent, ie rho is 0 (p > 0.05)
+# H1: A monotonic relationship exists between patient ages and survival times, ie rho is not 0 (p < 0.05)
+
+cor.test(df_deceased$Age, df_deceased$Time, method="spearman", exact=FALSE)
+
+#H0 failed to be rejected
+```
+
+#### Test for correlation between serum bilirubin level and survival time
+```{r sprman corr test - bilirubin and survival time}
+# H0: Bilirubin levels and survival times are independent, ie rho is 0 (p > 0.05)
+# H1: A monotonic relationship exists between bilirubin levels and survival times, ie rho is not 0 (p < 0.05)
+
+cor.test(df_deceased$Bilirubin, df_deceased$Time, method="spearman", exact=FALSE)
+
+#H0 rejected
+```
+
+#### Test for correlation between serum ablumin level and survival time
+```{r sprman corr test - albumin and survival time}
+# H0: Albumin levels and survival times are independent, ie rho is 0 (p > 0.05)
+# H1: A monotonic relationship exists between albumin levels and survival times, ie rho is not 0 (p < 0.05)
+
+cor.test(df_deceased$Albumin, df_deceased$Time, method="spearman", exact=FALSE)
+
+#H0 rejected
+```
+
+#### Test for correlation between blood platelet count and survival time
+```{r sprman corr test - platelets and survival time}
+# H0: Platelet counts and survival times are independent, ie rho is 0 (p > 0.05)
+# H1: A monotonic relationship exists between platelet counts and survival times, ie rho is not 0 (p < 0.05)
+
+cor.test(df_deceased$Platelets, df_deceased$Time, method="spearman", exact=FALSE)
+
+#H0 rejected
+```
+
+#### Test for correlation between prothrombin time and survival time
+```{r sprman corr test - prothrombin time and survival time}
+# H0: Prothrombin times and survival times are independent, ie rho is 0 (p > 0.05)
+# H1: A monotonic relationship exists between prothrombin times and survival times, ie rho is not 0 (p < 0.05)
+
+cor.test(df_deceased$Prothrombin, df_deceased$Time, method="spearman", exact=FALSE)
+
+#H0 rejected
+```
+
+### Shapiro-Wilk Test for Normality
+
+#### Test for normality in survival times grouped by clinical trial participation
+```{r sw test - survival time by treatment}
+# For participants treated with penicillamine, trial controls, and non-participants:
+# H0: Survival times follow a normal distribution (p > 0.05)
+# H1: Survival times do not follow a normal distribution (p < 0.05)
+
+by(df_deceased$Time, df_deceased$Drug, shapiro.test)
+
+# H0 rejected for participants treated with penicillamine, trial controls, and non-participants
+```
+
+#### Test for normality in survival times grouped by clinical trial participation after removing outliers
+```{r sw test - survival time by treatment (dropped outliers)}
+df_clean <- drop_outliers(df_deceased, "Time")
+
+# For participants treated with penicillamine, trial controls, and non-participants:
+# H0: Survival times follow a normal distribution (p > 0.05)
+# H1: Survival times do not follow a normal distribution (p < 0.05)
+
+by(df_clean$Time, df_clean$Drug, shapiro.test)
+
+# H0 rejected for participants treated with penicillamine, trial controls, and non-participants
+```
+
+### Mann-Whitney U Test 
+
+#### Test for differences in survival times grouped by sex
+```{r mw u test - survival time by sex}
+# H0: The median survival times of male and female patients are equal (p > 0.05)
+# H1: The median survival times of male and female patients are not equal (p < 0.05)
+
+by(df_deceased$Time, df_deceased$Sex, median)
+wilcox.test(Time ~ Sex, data = df_deceased, exact = FALSE)
+
+# H0 failed to be rejected
+```
+
+### Kruskal-Wallis Test
+
+#### Test for differences in survival times grouped by clinical trial participation
+```{r kw test - survival time by treatment}
+# H0: Median survival times do not differ by treatment type (p > 0.05)
+# H1: Median survival times differ by treatment type (p < 0.05)
+
+by(df_deceased$Time, df_deceased$Drug, median)
+kruskal.test(df_deceased$Time, df_deceased$Drug)
+
+# H0 failed to be rejected
+```
+
+#### Test for differences in survival times grouped by severity of oedema
+```{r kw test - survival time by oedema}
+# H0: Median survival times do not differ by severity of oedema (p > 0.05)
+# H1: Median survival times differ by severity of oedema (p < 0.05)
+
+by(df_deceased$Time, df_deceased$Oedema, median)
+kruskal.test(df_deceased$Time, df_deceased$Oedema)
+
+# H0 rejected
+```
+
+#### Size of difference in survival times grouped by severity of oedema
+```{r kw test - survival time by oedema - effect size}
+# Effect size - Eta-squared 
+kruskal_effsize(df_deceased, Time ~ Oedema, conf.level = 0.95)
+```
+
+#### Test for differences in survival times grouped by histological stage
+```{r kw test - survival time by stage}
+# H0: Median survival times do not differ between histological stages of disease (p > 0.05)
+# H0: Median survival times differ between histological stages of disease (p > 0.05)
+
+by(df_deceased$Time, df_deceased$Stage, median)
+kruskal.test(df_deceased$Time, df_deceased$Stage)
+
+# H0 rejected
+```
+
+#### Size of difference in survival times grouped by histological stage
+```{r kw test - survival time by stage - effect size}
+# Effect size - Eta-squared 
+kruskal_effsize(df_deceased, Time ~ Stage, conf.level = 0.95)
+```
+### Kruskal-Wallis Post-Hoc Analysis
+
+#### Analysis of differences in survival times grouped by severity of oedema
+```{r post-hoc - survival time by oedema}
+# For each pair of oedema severity class:
+# H0: The median survival times between pairs are equal (p > 0.05)
+# H1: The median survival times between pairs are not equal (p < 0.05)
+
+pairwise.wilcox.test(df_deceased$Time, df_deceased$Oedema,
+                     p.adjust.method = "bonferroni", paired = FALSE, exact = FALSE, alternative = "two.sided")
+
+#HO rejected for the 'No Oedema'-'Mild Oedema' and 'No Oedema'-'Severe Oedema' pairs only
+```
+#### Analysis of differences in survival times grouped by histological stage
+```{r post-hoc - survival time by stage}
+# For each pair of histological stage of disease:
+# H0: The median survival times between pairs are equal (p > 0.05)
+# H1: The median survival times between pairs are not equal (p < 0.05)
+
+pairwise.wilcox.test(df_deceased$Time, df_deceased$Stage,
+                     p.adjust.method = "bonferroni", paired = FALSE, exact = FALSE, alternative = "two.sided")
+
+#HO rejected for the 'Stage II'-'Stage IV' and 'Stage III'-'Stage IV' pairs only
+```
+# Statistical Modelling
+
+## Censored vs Deceased
+
+### One-hot encoding qualitative variables
+```{r glm - one-hot encoding}
+df_main_glm <- dummy_cols(df_main, select_columns = c("Sex", "Oedema", "Stage"), remove_first_dummy = TRUE)
+df_main_glm <- df_main_glm[, c(2,1,4,7:10,12:17)]
+colnames(df_main_glm)
+```
+
+### Multicollinearity Diagnostics
+
+```{r glm - spearman correlation}
+main_glm_correlations <- rcorr(as.matrix(df_main_glm[, c(-1)]), type = "spearman")
+main_glm_correlations
+write.csv(main_glm_correlations$r, "./outputs/main_glm_correlations.csv")
+write.csv(main_glm_correlations$P, "./outputs/main_glm_correlations_p_values.csv")
+```
+
+### Multiple Binary Logistic Regression
+
+#### Model 0 - status ~ intercept only
+```{r glm0 - status ~ intercept only}
+glm0 <- glm(Status ~ 1, data = df_main, family = 'binomial')
+summary(glm0)
+```
+
+#### Model 1 - status ~ age and serum bilirubin level
+```{r glm1 - status ~ age and bilirubin}
+glm1 <- glm(Status ~ Age + Bilirubin, data = df_main, family = 'binomial')
+summary(glm1)
+```
+
+#### Model 2 - status ~ observation time and sex
+```{r glm2 - status ~ observation time and sex}
+glm2 <- glm(Status ~ Time + Sex, data = df_main, family = 'binomial')
+summary(glm2)
+```
+
+#### Model 3 - status ~ serum albumin level and sex
+```{r glm3 - status ~ albumin and sex}
+glm3 <- glm(Status ~ Albumin + Sex, data = df_main, family = 'binomial')
+summary(glm3)
+```
+
+#### Model 4 - status ~ sex and histological stage
+```{r glm4 - status ~ sex and stage}
+glm4 <- glm(Status ~ Sex + Stage, data = df_main, family = 'binomial')
+summary(glm4)
+```
+
+#### Model 4.1 - status ~ sex and histological stages III and IV
+```{r glm4.1 - status ~ sex and stages III and IV}
+glm4.1 <- glm(Status ~ Sex_Female + `Stage_Stage III` + `Stage_Stage IV`, data = df_main_glm, family = 'binomial')
+summary(glm4.1)
+```
+
+#### Model 4.2 - status ~ sex and histological stage IV
+```{r glm4.2 - status ~ sex and stage IV}
+glm4.2 <- glm(Status ~ Sex_Female + `Stage_Stage IV`, data = df_main_glm, family = 'binomial')
+summary(glm4.2)
+```
+#### Model 4.3 - status ~ sex and histological stage IV minus intercept
+```{r glm4.2 - status ~ sex and stage IV minus intercept}
+glm4.3 <- glm(Status ~ Sex_Female + `Stage_Stage IV` - 1, data = df_main_glm, family = 'binomial')
+summary(glm4.3)
+```
+#### Model 5 - status ~ sex and severity of oedema
+```{r glm5 - status ~ sex and oedema}
+glm5 <- glm(Status ~ Sex + Oedema, data = df_main, family = 'binomial')
+summary(glm5)
+```
+#### Model 5.1 - status ~ sex and severity of oedema minus intercept
+```{r glm5.1 - status ~ sex and oedema minus intercept}
+glm5.1 <- glm(Status ~ Sex_Female + `Oedema_Mild Oedema` + `Oedema_Severe Oedema` - 1, data = df_main_glm, family = 'binomial')
+summary(glm5.1)
+```
+#### Model 6 - status ~ sex and blood platelet count
+```{r glm6 - status ~ sex and platelets}
+glm6 <- glm(Status ~ Sex + Platelets, data = df_main, family = 'binomial')
+summary(glm6)
+```
+#### Model 6.1 - status ~ sex
+```{r glm6 - status ~ sex}
+glm6.1 <- glm(Status ~ Sex_Female, data = df_main_glm, family = 'binomial')
+summary(glm6.1)
+```
+#### Model 6.2 - status ~ sex minus intercept
+```{r glm6 - status ~ sex minus intercept}
+glm6.2 <- glm(Status ~ Sex_Female - 1, data = df_main_glm, family = 'binomial')
+summary(glm6.2)
+```
+#### Model 7 - status ~ sex and prothrombin time
+```{r glm7 - status ~ sex and prothrombin time}
+glm7 <- glm(Status ~ Sex + Prothrombin, data = df_main, family = 'binomial')
+summary(glm7)
+```
+#### Model 7.1 - status ~ prothrombin time
+```{r glm7.1 - status ~ prothrombin time}
+glm7.1 <- glm(Status ~ Prothrombin, data = df_main, family = 'binomial')
+summary(glm7.1)
+```
+
+### Model 1 Analysis
+
+#### Analysis of Deviance from Model 0
+```{r glm1 - deviance - status ~ age and bilirubin}
+anova(glm1, glm0, test = "Chisq")
+```
+
+#### Outlier Diagnostics
+```{r glm1 - pearson residuals - status ~ age and bilirubin}
+pearson_residuals <- residuals(glm1, type = "pearson")
+unique(which(abs(pearson_residuals) > 3))
+```
+
+#### Plot of Linear Predictors vs Pearson Residuals
+
+```{r glm1 - predictors vs residuals - status ~ age and bilirubin}
+predict_vs_resid = plot(glm1$linear.predictors, pearson_residuals,
+     xlab = "Pearson Residuals",
+     ylab = "Predicted Values")
+```
+
+```{r save glm1 predictors vs residuals plot}
+jpeg("./outputs/glm1_pred_vs_resid.jpg", width = 800, height = 600)
+predict_vs_resid = plot(glm1$linear.predictors, pearson_residuals,
+     xlab = "Pearson Residuals",
+     ylab = "Predicted Values",
+     cex.lab = 1.6)
+dev.off()
+```
+
+#### Prediction Scoring
+```{r glm1 - pred score - status ~ age and bilirubin}
+predicted_prob <- glm1$fitted.values
+predicted_class <- ifelse(predicted_prob > 0.3, "Deceased", "Censored")
+confusionMatrix(as.factor(predicted_class), df_main_glm$Status, positive = "Deceased")
+```
+
+## Survival Time
+
+### Multiple Linear Regression
+
+#### Multicollinearity Diagnostics
+```{r mlr - scatter plot matrix}
+pairs(as.matrix(df_deceased[, c(1,3,6:9)]))
+```
+
+```{r mlr - spearman correlation}
+deceased_mlr_correlations <- rcorr(as.matrix(df_deceased[, c(1,6:9)]), type = "spearman")
+deceased_mlr_correlations
+write.csv(deceased_mlr_correlations$r, "./outputs/deceased_mlr_correlations.csv")
+write.csv(deceased_mlr_correlations$P, "./outputs/deceased_mlr_correlations_p_values.csv")
+```
+
+#### Model Construction
+
+##### Model 1 - survival time ~ serum albumin level and blood platelet count
+```{r mlr1 - survival time ~ albumin and platelets}
+mlr1 <- lm(Time ~ Albumin + Platelets, data = df_deceased)
+summary(mlr1)
+```
+
+##### Model 1.1 - survival time ~ serum albumin level
+```{r mlr 1.1 - survival time ~ albumin}
+mlr1.1 <- lm(Time ~ Albumin, data = df_deceased)
+summary(mlr1.1)
+```
+
+##### Model 2 - survival time ~ prothrombin time
+```{r mlr2 - survival time ~ prothrombin time}
+mlr2 <- lm(Time ~ Prothrombin, data = df_deceased)
+summary(mlr2)
+```
+
+##### Model 3 - survival time ~ blood platelet count and serum blirubin level
+```{r mlr3 - survival time ~ platelets and bilirubin}
+mlr3 <- lm(Time ~ Platelets + Bilirubin, data = df_deceased)
+summary(mlr3)
+```
+##### Model 3.1 - survival time ~ serum blirubin level
+```{r mlr3.1 - survival time ~ bilirubin}
+mlr3.1 <- lm(Time ~ Bilirubin, data = df_deceased)
+summary(mlr3.1)
+```
+
+#### Model 1.1 Analysis
+
+##### Residual Analysis
+
+###### Shapiro-Wilk Test for Normality
+```{r mlr1.1 - sw test - survival time ~ albumin}
+shapiro.test(residuals(mlr1.1))
+```
+
+###### Durbin-Watson Test for Autocorrelation
+```{r mlr1.1 - dw test - survival time ~ albumin}
+dwtest(mlr1.1)
+```
+
+###### Plot of Predicted Values vs Residuals
+```{r mlr1.1 - pred vs residuals - survival time ~ albumin}
+plot(predict(mlr1.1), residuals(mlr1.1), xlab = "Model Residuals", ylab = "Predicted Values")
+```
+```{r save mlr1.1 pred vs residuals plot}
+jpeg("./outputs/mlr3_pred_vs_resid.jpg", width = 800, height = 600)
+plot(predict(mlr1.1), residuals(mlr1.1), xlab = "Model Residuals", ylab = "Predicted Values", cex.lab = 1.6)
+dev.off()
+```
+
+###### Studentised Breusch-Pagan Test for Homoscedasticity
+```{r mlr1.1 bp test - survival time ~ albumin}
+bptest(mlr1.1)
+```
+
+##### Outlier Diagnostics
+
+###### Studentised Residuals
+```{r mlr1.1 - studentised residuals - survival time ~ albumin}
+studres <- studres(mlr1.1)
+which(abs(studres) > 2)
+```
+
+###### Cook's Distances
+```{r mlr1.1 - cooks distances - survival time ~ albumin}
+cook <- cooks.distance(mlr1.1, type = 'rstandard')
+which(cook >= 1)
+```
+
+###### Leverages
+```{r mlr1.1 - leverages - survival time ~ albumin}
+leverages <- hatvalues(mlr1.1, type = 'rstandard')
+cutofflev <- (2 * 2)/nrow(df_deceased)
+which(leverages > cutofflev)
+```
+
+### N-Way ANOVA
+
+### Recode levels based on Kruskal-Wallis post-hoc analysis findings
+```{r}
+df_deceased$Oedema <- mapvalues(df_deceased$Oedema,
+                           from = c("No Oedema", "Mild Oedema", "Severe Oedema"), 
+                           to = c("Oedema Absent", "Oedema Present", "Oedema Present"))
+df_deceased$Stage <- mapvalues(df_deceased$Stage,
+                           from = c("Stage II", "Stage III", "Stage IV"), 
+                           to = c("Stage II-III", "Stage II-III", "Stage IV"))
+```
+
+
+#### One-hot encoding qualitative variables
+```{r anova - one-hot encoding}
+df_deceased_anova <- dummy_cols(df_deceased, select_columns = c("Oedema", "Stage"), remove_first_dummy = TRUE)
+df_deceased_anova <- df_deceased_anova[, c(1,11,12)]
+colnames(df_deceased_anova)
+```
+
+#### Multicollinearity Diagnostics
+```{r anova - spearman correlation}
+deceased_anova_correlations <- rcorr(as.matrix(df_deceased_anova), type = "spearman")
+deceased_anova_correlations
+write.csv(deceased_anova_correlations$r, "./outputs/deceased_anova_correlations.csv")
+write.csv(deceased_anova_correlations$P, "./outputs/deceased_anova_correlations_p_values.csv")
+```
+
+#### Model Construction
+
+##### Model 1 - survival time ~ presence of oedema, membership to stage IV of disease, and interactions
+```{r anova1 - survival time ~ oedema and stage and oedema-stage interactions}
+anova1 <- lm(Time ~ `Oedema_Oedema Present` + `Stage_Stage IV` + `Oedema_Oedema Present`:`Stage_Stage IV`, data = df_deceased_anova)
+summary(anova1)
+```
+##### Model 1.1 - survival time ~ presence of oedema and membership to stage IV of disease
+```{r anova1 - survival time ~ oedema and stage IV}
+anova1.1 <- lm(Time ~ `Oedema_Oedema Present` + `Stage_Stage IV`, data = df_deceased_anova)
+summary(anova1.1)
+```
+#### Model 1.1 Analysis
+
+##### Residual Analysis
+
+###### Shapiro-Wilk Test for Normality
+```{r anova1.1 - sw test - survival time ~ oedema and stage IV}
+shapiro.test(residuals(anova1.1))
+```
+
+###### Studentised Breusch-Pagan Test for Homoscedasticity
+```{r anova1.1 - bp test - survival time ~ oedema and stage IV}
+bptest(anova1.1)
+```
+
+##### Outlier Diagnostics
+
+###### Studentised Residuals
+```{r anova1.1 - studentised residuals - survival time ~ oedema and stage IV}
+studres <- studres(anova1.1)
+which(abs(studres) > 2)
+```
+
+###### Cook's Distances
+```{r anova1.1 - cooks distances - survival time ~ oedema and stage IV}
+cook <- cooks.distance(anova1.1, type = 'rstandard')
+which(cook >= 1)
+```
+
+###### Leverages
+```{r anova1.1 - leverages - survival time ~ oedema and stage IV}
+leverages <- hatvalues(anova1.1, type = 'rstandard')
+cutofflev <- (2 * 3)/nrow(df_deceased)
+which(leverages > cutofflev)
+```
+
+### ANCOVA
+
+#### One-hot encoding qualitative variables
+```{r ancova - one-hot encoding}
+df_deceased_ancova <- dummy_cols(df_deceased, select_columns = c("Oedema", "Stage"), remove_first_dummy = TRUE)
+df_deceased_ancova <- df_deceased_ancova[, c(1,6:9,11,12)]
+colnames(df_deceased_ancova)
+```
+
+#### Multicollinearity Diagnostics
+```{r ancova - spearman correlation}
+deceased_ancova_correlations <- rcorr(as.matrix(df_deceased_ancova), type = "spearman")
+deceased_ancova_correlations
+write.csv(deceased_ancova_correlations$r, "./outputs/deceased_ancova_correlations.csv")
+write.csv(deceased_ancova_correlations$P, "./outputs/deceased_ancova_correlations_p_values.csv")
+```
+
+#### Model Construction
+
+##### Model 1 - survival time ~ serum bilirubin, serum albumin, platelet count, prothrombin time, presence of oedema, and membership to stage IV of disease
+```{r ancova1 - survival time ~ bilirubin and albumin and platelets and prothrombin and oedema and stage IV}
+ancova1 <- lm(Time ~ Bilirubin + Albumin + Platelets + Prothrombin + `Oedema_Oedema Present` + `Stage_Stage IV`,
+              data = df_deceased_ancova)
+summary(ancova1)
+```
+##### Model 1.1 - survival time ~ serum bilirubin, serum albumin, prothrombin time, presence of oedema, and membership to stage IV of disease
+```{r ancova1.1 - survival time ~ bilirubin and albumin and prothrombin and oedema and stage IV}
+ancova1.1 <- lm(Time ~ Bilirubin + Albumin + Prothrombin + `Oedema_Oedema Present` + `Stage_Stage IV`,
+              data = df_deceased_ancova)
+summary(ancova1.1)
+```
+##### Model 1.2 - survival time ~ serum bilirubin, serum albumin, presence of oedema, and membership to stage IV of disease
+```{r ancova1.2 - survival time ~ bilirubin and albumin and oedema and stage IV}
+ancova1.2 <- lm(Time ~ Bilirubin + Albumin + `Oedema_Oedema Present` + `Stage_Stage IV`,
+              data = df_deceased_ancova)
+summary(ancova1.2)
+```
+##### Model 1.3 - survival time ~ serum bilirubin, serum albumin, and membership to stage IV of disease
+```{r ancova1.3 - survival time ~ bilirubin and albumin and stage IV}
+ancova1.3 <- lm(Time ~ Bilirubin + Albumin + `Stage_Stage IV`,
+              data = df_deceased_ancova)
+summary(ancova1.3)
+```
+##### Model 1.4 - survival time ~ serum bilirubin, serum albumin, and membership to stage IV of disease minus the intercept
+```{r ancova1.4 - survival time ~ bilirubin and albumin and stage IV minus intercept}
+ancova1.4 <- lm(Time ~ Bilirubin + Albumin + `Stage_Stage IV` - 1,
+              data = df_deceased_ancova)
+summary(ancova1.4)
+```
+
+#### Model 1.4 Analysis
+
+##### Residual Analysis
+
+###### Shapiro-Wilk Test for Normality
+```{r ancova1.4 - sw test - survival time ~ bilirubin and albumin and stage IV minus intercept}
+shapiro.test(residuals(ancova1.4))
+```
+
+###### Studentised Breusch-Pagan Test for Homoscedasticity
+```{r ancova1.4 - bp test - survival time ~ bilirubin and albumin and stage IV minus intercept}
+bptest(ancova1.4)
+```
+
+##### Outlier Diagnostics
+
+###### Studentised Residuals
+```{r ancova1.4 - studentised residuals - survival time ~ bilirubin and albumin and stage IV minus intercept}
+studres <- studres(ancova1.4)
+which(abs(studres) > 2)
+```
+
+###### Cook's Distances
+```{r ancova1.4 - cooks distances - survival time ~ bilirubin and albumin and stage IV minus intercept}
+cook <- cooks.distance(ancova1.4, type = 'rstandard')
+which(cook >= 1)
+```
+
+###### Leverages
+```{r ancova1.4 - leverages - survival time ~ bilirubin and albumin and stage IV minus intercept}
+leverages <- hatvalues(ancova1.4, type = 'rstandard')
+cutofflev <- (2 * 2)/nrow(df_deceased)
+which(leverages > cutofflev)
+```
